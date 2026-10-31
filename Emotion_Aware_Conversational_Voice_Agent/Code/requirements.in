@@ -9,3 +9,4 @@ tqdm
 matplotlib
 seaborn
 xgboost
+openai-whisper==20250625

@@ -52,3 +52,8 @@ pycparser==3.12
 colorama==0.4.6
 platformdirs==4.14.2
 tzdata==2026.6
+# --- ASR (Task A step 4) ---
+openai-whisper==20250625
+tiktoken==0.14.0
+regex==2026.9.29
+more-itertools==11.2.1
