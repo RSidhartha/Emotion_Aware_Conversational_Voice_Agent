@@ -13,3 +13,17 @@ vector_store/
 # Python
 __pycache__/
 *.pyc
+
+# Virtual environments
+.venv/
+env/
+venv/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.idea/
+.vscode/
+*.swp

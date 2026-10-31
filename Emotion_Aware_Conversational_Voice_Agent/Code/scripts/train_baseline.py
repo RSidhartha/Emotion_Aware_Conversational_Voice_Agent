@@ -181,3 +181,99 @@ print(compare.to_string(index=False))
 Path("results/metrics").mkdir(parents=True, exist_ok=True)
 compare.to_csv("results/metrics/model_comparison.csv", index=False)
 print("\nSaved -> results/metrics/model_comparison.csv")
+
+# ── Fairness Audit: data prep (project-specific) ──────────────────────────
+# RAVDESS: odd actor IDs = male, even actor IDs = female
+test_df = test_df.copy()
+test_df["sex"] = np.where(test_df["speaker_id"] % 2 == 0, "female", "male")
+
+print(test_df.groupby("sex").speaker_id.unique())   # which actors are in each group
+print(test_df.groupby(["sex", "label"]).size())     # clips per group and class
+print()
+
+# Binary framing: 1 = distress (angry or sad), 0 = happy
+DISTRESS = ["angry", "sad"]
+y_true_bin = pd.Series(y_test.isin(DISTRESS).astype(int).values, index=test_df.index)
+y_pred_bin = pd.Series(pd.Series(y_pred_xgb).isin(DISTRESS).astype(int).values, index=test_df.index)
+
+# ── Fairness Audit ─────────────────────────────────────────────────────────
+# Add this cell to your final project notebook.
+# Replace placeholder variable names with your actual data.
+ 
+import pandas as pd
+import numpy as np
+from sklearn.metrics import confusion_matrix, accuracy_score
+ 
+# ── Configure these four variables ────────────────────────────────────────
+y_true          = y_true_bin   # Your actual labels (ground truth series or array)
+y_pred          = y_pred_bin   # Your model's predicted labels
+sensitive       = test_df["sex"]   # The demographic column (pandas Series, same index as y_true)
+sensitive_name  = 'sex (derived from speaker_id)'   # Display name for the report
+ 
+# ── Overall performance ───────────────────────────────────────────────────
+print("=" * 60)
+print("FAIRNESS AUDIT REPORT")
+print("=" * 60)
+print(f"Sensitive attribute: {sensitive_name}")
+print(f"Overall accuracy:    {accuracy_score(y_true, y_pred):.4f}")
+print(f"Sample size:         {len(y_true):,}")
+print()
+ 
+# ── Performance by group ──────────────────────────────────────────────────
+print(f"Performance by {sensitive_name}:")
+print("-" * 60)
+ 
+results = []
+for group in sorted(sensitive.unique()):
+    mask = sensitive == group
+    y_t, y_p = y_true[mask], y_pred[mask]
+ 
+    n       = int(mask.sum())
+    acc     = accuracy_score(y_t, y_p)
+    pos_rate = float((y_p == 1).mean())
+ 
+    if len(np.unique(y_t)) == 2:
+        tn, fp, fn, tp = confusion_matrix(y_t, y_p, labels=[0, 1]).ravel()
+        tpr = tp / (tp + fn) if (tp + fn) > 0 else np.nan
+        fpr = fp / (fp + tn) if (fp + tn) > 0 else np.nan
+    else:
+        tpr = fpr = np.nan
+ 
+    results.append({
+        'Group': str(group), 'N': n,
+        'Accuracy': round(acc, 4),
+        'Positive Rate': round(pos_rate, 4),
+        'True Positive Rate': round(tpr, 4) if not np.isnan(tpr) else 'N/A',
+        'False Positive Rate': round(fpr, 4) if not np.isnan(fpr) else 'N/A',
+    })
+ 
+df_audit = pd.DataFrame(results)
+print(df_audit.to_string(index=False))
+print()
+ 
+# ── Disparate Impact Ratio (the four-fifths rule) ─────────────────────────
+print("Disparate Impact Analysis (Four-Fifths Rule):")
+print("-" * 60)
+pos_rates  = df_audit.set_index('Group')['Positive Rate'].astype(float)
+max_group  = pos_rates.idxmax()
+min_group  = pos_rates.idxmin()
+di_ratio   = pos_rates.min() / pos_rates.max() if pos_rates.max() > 0 else np.nan
+ 
+print(f"Highest positive rate: {max_group} ({pos_rates.max():.4f})")
+print(f"Lowest positive rate:  {min_group} ({pos_rates.min():.4f})")
+print(f"Disparate impact ratio: {di_ratio:.4f}")
+if di_ratio < 0.8:
+    print("WARNING: Below 0.8 — potential disparate impact (four-fifths rule)")
+else:
+    print("OK: Above 0.8 — no disparate impact signal by four-fifths rule")
+print()
+ 
+# ── Accuracy gap ──────────────────────────────────────────────────────────
+print("Accuracy Gap Between Groups:")
+print("-" * 60)
+acc_by_group = df_audit.set_index('Group')['Accuracy'].astype(float)
+acc_gap      = acc_by_group.max() - acc_by_group.min()
+print(f"Best accuracy:  {acc_by_group.idxmax()} ({acc_by_group.max():.4f})")
+print(f"Worst accuracy: {acc_by_group.idxmin()} ({acc_by_group.min():.4f})")
+print(f"Accuracy gap:   {acc_gap:.4f} ({acc_gap*100:.1f} percentage points)")
+print("=" * 60)
