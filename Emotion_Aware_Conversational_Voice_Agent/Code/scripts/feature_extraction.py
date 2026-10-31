@@ -25,6 +25,7 @@ TRIM_TOP_DB = 30      # silence-trim aggressiveness (higher = trims less)
 N_MFCC      = 13      # number of MFCC coefficients
 SEED        = 42      # makes the speaker split reproducible
 USE_PITCH   = True    # F0 features are informative but slow; set False for a fast run
+MIN_LENGTH_FALLBACK = 512   # if trimming leaves fewer samples than this, keep the untrimmed clip
 
 # Emotion Map
 # Keeping only 3 classes for preliminary results: happy, sad, angry.
@@ -58,6 +59,20 @@ def parse_filename(wav_path: Path):
     actor_id = int(parts[6])
     label =EMOTION_MAP.get(emotion_code) #None if calm/disgust/surprised, etc.
     return label, actor_id
+
+#Load + Preprocess (shared by main() and the live emotion predictor)
+
+def load_audio(path):
+    """Load a clip as mono at SAMPLE_RATE. Returns (y, sr)."""
+    y, sr = librosa.load(path, sr=SAMPLE_RATE, mono=True)
+    return y, sr
+
+def preprocess(y: np.ndarray, sr: int) -> np.ndarray:
+    """Trim leading/trailing silence; fall back to the untrimmed clip if too little is left."""
+    y_trim, _ = librosa.effects.trim(y, top_db=TRIM_TOP_DB)
+    if y_trim.size < MIN_LENGTH_FALLBACK:
+        return y
+    return y_trim
 
 #Extract Features
 
@@ -157,11 +172,9 @@ def main():
             dropped += 1
             continue
         try:
-            y, sr = librosa.load(w, sr=SAMPLE_RATE, mono=True)
+            y, sr = load_audio(w)
             duration = float(librosa.get_duration(y=y, sr=sr))
-            y_trim, _ = librosa.effects.trim(y, top_db=TRIM_TOP_DB)
-            if y_trim.size < 512:
-                y_trim = y
+            y_trim = preprocess(y, sr)
             feats = extract_features(y_trim, sr)
         except Exception as e:
             print(f"  skipping {w.name}: {e}")
