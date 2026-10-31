@@ -34,3 +34,6 @@ Thumbs.db
 *.bin
 *.safetensors
 *.ckpt
+
+# Extra virtual environments (e.g. .venv312)
+.venv*/

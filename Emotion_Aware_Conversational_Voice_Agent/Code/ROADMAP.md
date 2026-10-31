@@ -64,6 +64,8 @@ Wire the minimum viable pipeline printed to the terminal:
 
 ## Environment
 
-- Python 3.14.5, CPU-only torch 2.15.0
-- Venv: `(emotion-agent)` in `Code/.venv/`
+- Python 3.12.10, CPU-only torch 2.15.0
+- Venv: `(emotion-agent-312)` in `Code/.venv312/`
+- Activate (PowerShell, from `Code/`): `.\.venv312\Scripts\Activate.ps1`
 - Pinned deps: `requirements.txt` (unpinned originals in `requirements.in`)
+- The original Python 3.14.5 venv (`Code/.venv/`) is kept as a backup and is no longer used
