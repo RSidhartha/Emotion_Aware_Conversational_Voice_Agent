@@ -98,10 +98,15 @@ def generate_reply_template(mode, transcript) -> str:
 
 class _NextModel(Exception):
     """This model failed in a way another model might not (overload, timeout, ...)."""
+    def __init__(self, outcome, detail=""):
+        super().__init__(f"{outcome} {detail}".strip())
+        self.outcome = outcome   # short label for the attempts log, e.g. "429", "timeout"
 
 
-def _call_llm(system_prompt, user_message, history=None, api_key=None, models=None):
-    """Try each model in order. Returns (text, model). Raises if every model fails or a fatal error occurs."""
+def _call_llm(system_prompt, user_message, history=None, api_key=None, models=None, attempts=None):
+    """Try each model in order. Returns (text, model). Raises if every model fails or a fatal error occurs.
+    If `attempts` is a list, one {model, outcome, seconds} entry is appended per model call."""
+    attempts = [] if attempts is None else attempts
     import httpx
     from google import genai
     from google.genai import types, errors
@@ -128,17 +133,29 @@ def _call_llm(system_prompt, user_message, history=None, api_key=None, models=No
             http_options=types.HttpOptions(timeout=int(timeout_s * 1000)),   # milliseconds
             thinking_config=types.ThinkingConfig(thinking_level=thinking) if thinking else None,
         )
+        t0 = time.monotonic()
+
+        def log(outcome):
+            attempts.append({"model": model, "outcome": outcome, "seconds": round(time.monotonic() - t0, 2)})
+
         try:
             response = client.models.generate_content(model=model, contents=contents, config=config)
         except errors.APIError as e:
+            log(str(e.code))
             if e.code in RETRYABLE_CODES:
-                raise _NextModel(f"{e.code} {e.status}") from e
+                raise _NextModel(str(e.code), e.status) from e
             raise                                    # 400 bad key / 403 / bad request: fatal
-        except (httpx.TimeoutException, httpx.TransportError) as e:
-            raise _NextModel(type(e).__name__) from e
+        except httpx.TimeoutException as e:
+            log("timeout")
+            raise _NextModel("timeout", type(e).__name__) from e
+        except httpx.TransportError as e:
+            log("connection")
+            raise _NextModel("connection", type(e).__name__) from e
         text = (response.text or "").strip()
         if not text:
-            raise _NextModel("empty response")
+            log("empty")
+            raise _NextModel("empty")
+        log("ok")
         return text
 
     deadline = time.monotonic() + TOTAL_BUDGET_S
@@ -150,6 +167,7 @@ def _call_llm(system_prompt, user_message, history=None, api_key=None, models=No
         timeout_s = timeout_left()
         if timeout_s < SERVER_MIN_DEADLINE_S:
             failures.append(f"{model}: skipped (budget)")
+            attempts.append({"model": model, "outcome": "skipped (budget)", "seconds": 0.0})
             break
         thinking = MIN_THINKING.get(model)
         try:
@@ -170,17 +188,19 @@ def _call_llm(system_prompt, user_message, history=None, api_key=None, models=No
 
 def generate_reply(mode, transcript, perceived_emotion=None, memory_facts=None,
                    history=None, use_llm=USE_LLM, api_key=None) -> dict:
-    """Returns {"text", "source": "llm"|"template", "model": str|None, "error": None|str}. Never raises."""
+    """Returns {"text", "source": "llm"|"template", "model": str|None, "error": None|str,
+    "attempts": [{model, outcome, seconds}, ...]}. Never raises."""
     error = None
+    attempts = []
     if use_llm:
         try:
             prompt = build_system_prompt(mode, perceived_emotion, memory_facts)
-            text, model = _call_llm(prompt, transcript, history, api_key)
-            return {"text": text, "source": "llm", "model": model, "error": None}
+            text, model = _call_llm(prompt, transcript, history, api_key, attempts=attempts)
+            return {"text": text, "source": "llm", "model": model, "error": None, "attempts": attempts}
         except Exception as e:
             error = f"{type(e).__name__}: {str(e)[:300]}"
     try:
         text = generate_reply_template(mode, transcript)
     except Exception as e:
         text, error = TEMPLATES["DEFAULT"], f"template failed: {type(e).__name__}"
-    return {"text": text, "source": "template", "model": None, "error": error}
+    return {"text": text, "source": "template", "model": None, "error": error, "attempts": attempts}

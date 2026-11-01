@@ -37,3 +37,6 @@ Thumbs.db
 
 # Extra virtual environments (e.g. .venv312)
 .venv*/
+
+# Agent session logs (contain user transcripts)
+Emotion_Aware_Conversational_Voice_Agent/Code/results/logs/

@@ -20,7 +20,7 @@
 
 ## Build Sequence (what's next, in order)
 
-### A. Thin end-to-end agent (NEXT)
+### A. Thin end-to-end agent — DONE (2026-10-31)
 Wire the minimum viable pipeline printed to the terminal:
 1. Whisper ASR (tiny.en) → text
 2. XGBoost probabilities → emotion label + distress score
@@ -30,6 +30,13 @@ Wire the minimum viable pipeline printed to the terminal:
 6. Print to screen (no TTS yet)
 
 **Goal**: Prove the loop works. No memory, no streaming, no audio output.
+
+**Result** (`scripts/agent.py --script`, 12-turn label script, test speaker 16):
+- MoodManager: 1 mode switch (DEFAULT → EMPATHETIC on turn 7, ignoring the one-off angry spike on turn 3) vs reactive baseline (`--no-mood`): 4 switches
+- Average turn latency ~2.5 s (LLM ~1.3–3 s, ASR ~0.45 s, emotion ~0.15 s); 5.1 s on a re-run where gemini-3.6-flash was rate-limited (429) on 10/12 turns
+- Shipped as built: 2 modes only (DEFAULT / EMPATHETIC, MoodManager v1); `build_system_prompt(mode, perceived_emotion, memory_facts)`; tone driven by mood state only, never the per-turn label
+- **Confound**: the Gemini fallback chain (3.6-flash → 3.5-flash-lite → 3.1-flash-lite) can change model mid-conversation, so tone differences may partly come from the model. Every attempt is logged per turn; pin one model for the Task F evaluation
+- RAVDESS transcripts are lexically neutral ("Kids are talking by the door"), so reply content is uninformative; tone is the only signal in scripted runs
 
 ### B. MemoryManager — JSON scaffold
 - Conversation buffer (last N turns)
