@@ -7,7 +7,8 @@ Logs every turn as one JSON line to results/logs/session_<timestamp>.jsonl.
 Usage (from anywhere):
   python scripts/agent.py clip1.wav clip2.wav ...
   python scripts/agent.py --script            # 12-turn label script from one test speaker (seed 42)
-  flags: --no-llm (template replies only), --no-mood (per-turn reactive baseline)
+  flags: --no-llm (template replies only), --no-mood (per-turn reactive baseline),
+         --tau T (abstain below top-1 confidence T; default TAU_CONF from abstain_curve.py, 0 disables)
 """
 from collections import deque
 from datetime import datetime
@@ -22,7 +23,7 @@ import pandas as pd
 from feature_extraction import load_audio, SAMPLE_RATE
 from emotion_predictor import EmotionPredictor, CODE_DIR
 from asr import ASR
-from mood_manager import MoodManager, reactive_mode
+from mood_manager import MoodManager, reactive_mode, TAU_CONF
 from response_generator import generate_reply, build_system_prompt
 
 # Config
@@ -38,8 +39,9 @@ DISTRESS_CONTEXT = "to have sounded distressed over the last few turns"
 
 
 class Agent:
-    def __init__(self, use_llm=True, use_mood=True):
+    def __init__(self, use_llm=True, use_mood=True, tau_conf=TAU_CONF):
         t0 = time.perf_counter()
+        self.tau_conf = tau_conf
         self.use_llm = use_llm
         self.use_mood = use_mood
         self.emotion = EmotionPredictor()
@@ -59,7 +61,7 @@ class Agent:
         LOG_DIR.mkdir(parents=True, exist_ok=True)
         self.log_path = LOG_DIR / f"session_{datetime.now():%Y%m%d_%H%M%S}.jsonl"
         self.startup_s = time.perf_counter() - t0
-        print(f"Agent ready in {self.startup_s:.1f}s  (llm={use_llm}, mood={use_mood})  log -> {self.log_path}")
+        print(f"Agent ready in {self.startup_s:.1f}s  (llm={use_llm}, mood={use_mood}, tau={tau_conf:.2f})  log -> {self.log_path}")
 
     def run_turn(self, wav_path) -> dict:
         self.turn += 1
@@ -78,14 +80,17 @@ class Agent:
         transcript = self.asr.transcribe_array(y, sr)
         timings["asr"] = time.perf_counter() - t0
 
+        confidence = max(emo["probs"].values())
         t0 = time.perf_counter()
         if self.use_mood:
-            mode = self.mood.update(emo["p_distress"])
+            mode = self.mood.update(emo["p_distress"], confidence, self.tau_conf)
             mood_score, turns_above = self.mood.score, self.mood.turns_above
+            abstained, check_in = self.mood.abstained, self.mood.check_in
             reason = self.mood.explain()
         else:
             mode = reactive_mode(emo["p_distress"], THRESHOLD)   # per-turn baseline for ablation
             mood_score, turns_above = None, None
+            abstained, check_in = False, False
             reason = "reactive baseline: p_distress vs 0.5"
         timings["mood"] = time.perf_counter() - t0
         switched = self.prev_mode is not None and mode != self.prev_mode
@@ -127,13 +132,14 @@ class Agent:
             "use_llm": self.use_llm,
             "use_mood": self.use_mood,
             # A2.1 inspectable state
-            "confidence": max(emo["probs"].values()),
-            "mood_params": {"gamma": GAMMA, "threshold": THRESHOLD, "persistence": PERSISTENCE},
+            "confidence": confidence,
+            "mood_params": {"gamma": GAMMA, "threshold": THRESHOLD, "persistence": PERSISTENCE,
+                            "tau_conf": self.tau_conf},
             "reason": reason,
             "system_prompt": system_prompt,
             # Placeholders for later A2 steps; always present so the log schema is stable
-            "abstained": None,
-            "check_in": None,
+            "abstained": abstained,   # A2.2
+            "check_in": check_in,     # A2.2 (logged only; used in the prompt from A2.3)
             "strategy": None,
             "tts_tags": None,
         }
@@ -152,7 +158,9 @@ class Agent:
         print(f"  transcript : {r['transcript']}")
         print(f"  emotion    : {probs}  -> label={r['label']}  confidence={r['confidence']:.2f}  p_distress={r['p_distress']:.3f}")
         print(f"  mood       : {mood}  mode={r['mode']}{'  << SWITCHED' if r['switched'] else ''}")
-        print(f"  reason     : {r['reason']}")
+        flags = "  ".join(f for f in ["ABSTAINED" if r["abstained"] else "",
+                                      "CHECK_IN" if r["check_in"] else ""] if f)
+        print(f"  reason     : {r['reason']}" + (f"   [{flags}]" if flags else ""))
         print(f"  reply      : {r['reply']}")
         src = f"{r['source']} ({r['model']})" if r["model"] else r["source"]
         print(f"  source     : {src}" + (f"  error={r['error']}" if r["error"] else ""))
@@ -195,11 +203,14 @@ def summary(results, true_labels=None):
           f"llm={results[0]['use_llm']})")
     print("=" * 70)
     print(f"Mode switches: {n_switches}")
+    abst = [r["turn"] for r in results if r["abstained"]]
+    print(f"Abstained turns: {abst or 'none'}   check_in turns: "
+          f"{[r['turn'] for r in results if r['check_in']] or 'none'}")
     for r in results:
         true = f"  true={true_labels[r['turn'] - 1]:5s}" if true_labels else ""
         model = f" ({r['model']})" if r["model"] else ""
         print(f"  turn {r['turn']:2d}{true}  pred={r['label']:5s}  p_distress={r['p_distress']:.2f}  "
-              f"mode={r['mode']:10s}  source={r['source']}{model}")
+              f"conf={r['confidence']:.2f}{'*' if r['abstained'] else ' '} mode={r['mode']:10s}  source={r['source']}{model}")
     totals = [r["timings"]["total"] for r in results]
     print(f"Average turn latency: {np.mean(totals):.2f}s  (min {min(totals):.2f}s, max {max(totals):.2f}s)")
     fallbacks = [r for r in results if fell_back(r)]
@@ -213,6 +224,8 @@ def main():
     ap.add_argument("clips", nargs="*", help="wav files to run in order")
     ap.add_argument("--script", action="store_true", help="12-turn label script from one test speaker")
     ap.add_argument("--no-llm", action="store_true", help="template replies only")
+    ap.add_argument("--tau", type=float, default=TAU_CONF,
+                    help=f"abstain threshold on top-1 confidence (default {TAU_CONF}; 0 disables)")
     ap.add_argument("--no-mood", action="store_true", help="per-turn reactive baseline instead of MoodManager")
     args = ap.parse_args()
 
@@ -225,7 +238,7 @@ def main():
     else:
         ap.error("give wav files or --script")
 
-    agent = Agent(use_llm=not args.no_llm, use_mood=not args.no_mood)
+    agent = Agent(use_llm=not args.no_llm, use_mood=not args.no_mood, tau_conf=args.tau)
     results = [agent.run_turn(c) for c in clips]
     summary(results, true_labels)
 

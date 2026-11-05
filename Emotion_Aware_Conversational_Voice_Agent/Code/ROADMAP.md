@@ -45,6 +45,19 @@ Design principles from the workflow doc, Section 0.6. All CPU, all on existing c
 1. **Inspectable state** (P1) — DONE (2026-11-05): add `MoodManager.explain()`; every turn in the session JSONL logs probs, confidence, abstain flag, mood score, turns_above, mode, strategy, reason, exact system prompt, LLM model, TTS tags
    - Shipped: `explain()` one-line reason; JSONL adds `confidence`, `mood_params`, `reason`, `system_prompt` (null with `--no-llm`) and always-present placeholders `abstained` / `check_in` / `strategy` / `tts_tags`. Re-run matches Task A (MoodManager 1 switch on turn 7, reactive 4)
 2. **Abstain** (P2): confidence = top-1 prob; if < τ_conf (start 0.5, tune on val) → mood holds state, no mode switch, logged `abstained`; after 2+ abstains in a non-neutral mood → `check_in` flag. Report coverage vs accuracy (targets the ~53% happy→distress bias)
+   - **Shipped / finding** (2026-11-05): `scripts/abstain_curve.py`; pre-set rule = highest val accuracy among taus with val coverage ≥ 0.70 → **τ_conf = 0.82** (agent default; `--tau 0` disables). Abstain holds score / turns_above / mode; `check_in` after 2+ consecutive abstains in a non-DEFAULT mood (logged only until A2.3). Outputs: `results/metrics/abstain_curve.csv`, `results/figures/abstain_coverage.png`
+
+     | τ | split | coverage | accuracy | happy→distress (kept happy) |
+     |---|---|---|---|---|
+     | 0 (no abstain) | val | 1.000 | 0.719 | 0.438 |
+     | 0 (no abstain) | test | 1.000 | 0.719 | 0.531 |
+     | 0.82 | val | 0.729 | 0.843 | 0.227 |
+     | 0.82 | test | 0.646 | 0.855 | 0.500 |
+
+   - Accuracy gain holds on test, but the happy→distress bias barely changes there (0.531 → 0.500, with only 44% of happy test clips kept); the val gain (0.438 → 0.227) didn't carry over
+   - `--script --tau 0` reproduces the A2.1 run exactly; with τ = 0.82 the script abstains on turns 1, 2, 4, 5, 8 and still switches once, on turn 7
+   - My-voice run (`data/my_voice` 01–10): abstained on 6/10 turns, 5 of which were correct predictions; mode never reached EMPATHETIC through the sad/angry stretch (without abstain it switches on turn 7). Confidence on out-of-domain audio runs low, so 0.82 is too strict there
+   - Abstain can't catch confident mistakes: `03_angry` was read as happy at confidence 0.91 and passed through
 3. **Code decides, LLM speaks** (P3): MoodManager outputs a strategy (VALIDATE / CALM / ENCOURAGE / NEUTRAL); `build_system_prompt(strategy, facts)` — drop `perceived_emotion` from the prompt. MoodManager v1 (single distress axis) can only give VALIDATE / NEUTRAL; MoodManager v2 (one EMA per class: sad→VALIDATE, angry→CALM, happy→ENCOURAGE) unlocks the other two
 4. **Crisis check** (P9): `safety.check_crisis(transcript)` right after ASR; on match skip the LLM, return a fixed safe response (988 in the US), no memory stored from that turn
 5. **Shuffle-order placebo** (P7): rerun `plot_mood_real.py` (1000 conversations) with turn order shuffled; compare MoodManager vs reactive, original vs shuffled; report either way
