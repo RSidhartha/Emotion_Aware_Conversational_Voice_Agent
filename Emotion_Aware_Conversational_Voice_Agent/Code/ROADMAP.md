@@ -58,6 +58,7 @@ Design principles from the workflow doc, Section 0.6. All CPU, all on existing c
    - `--script --tau 0` reproduces the A2.1 run exactly; with τ = 0.82 the script abstains on turns 1, 2, 4, 5, 8 and still switches once, on turn 7
    - My-voice run (`data/my_voice` 01–10): abstained on 6/10 turns, 5 of which were correct predictions; mode never reached EMPATHETIC through the sad/angry stretch (without abstain it switches on turn 7). Confidence on out-of-domain audio runs low, so 0.82 is too strict there
    - Abstain can't catch confident mistakes: `03_angry` was read as happy at confidence 0.91 and passed through
+   - **Rule B** (recorded 2026-11-05, before computing it): tau = highest val accuracy among taus with val coverage >= 0.85. Tested only on a fresh my-voice set (`data/my_voice_v2`), never on `data/my_voice` 01–10
 3. **Code decides, LLM speaks** (P3): MoodManager outputs a strategy (VALIDATE / CALM / ENCOURAGE / NEUTRAL); `build_system_prompt(strategy, facts)` — drop `perceived_emotion` from the prompt. MoodManager v1 (single distress axis) can only give VALIDATE / NEUTRAL; MoodManager v2 (one EMA per class: sad→VALIDATE, angry→CALM, happy→ENCOURAGE) unlocks the other two
 4. **Crisis check** (P9): `safety.check_crisis(transcript)` right after ASR; on match skip the LLM, return a fixed safe response (988 in the US), no memory stored from that turn
 5. **Shuffle-order placebo** (P7): rerun `plot_mood_real.py` (1000 conversations) with turn order shuffled; compare MoodManager vs reactive, original vs shuffled; report either way

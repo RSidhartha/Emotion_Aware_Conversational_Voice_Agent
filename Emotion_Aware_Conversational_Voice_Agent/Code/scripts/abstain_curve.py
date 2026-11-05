@@ -10,9 +10,12 @@ Rule, fixed in advance: tau_conf = the tau with the highest val accuracy among t
 val coverage >= 0.70 (ties -> the smallest tau, i.e. the most coverage).
 
 Outputs: results/metrics/abstain_curve.csv, results/figures/abstain_coverage.png
-Usage: python scripts/abstain_curve.py
+         (with a non-default --min-coverage, e.g. 0.85: abstain_curve_cov085.csv / abstain_coverage_cov085.png,
+          so the committed rule-A outputs are never overwritten)
+Usage: python scripts/abstain_curve.py [--min-coverage 0.85]
 """
 from pathlib import Path
+import argparse
 
 import matplotlib
 matplotlib.use("Agg")
@@ -27,7 +30,7 @@ OUT_CSV = CODE_DIR / "results" / "metrics" / "abstain_curve.csv"
 OUT_FIG = CODE_DIR / "results" / "figures" / "abstain_coverage.png"
 CLASSES = ["angry", "happy", "sad"]
 TAUS = np.round(np.arange(0.34, 0.95 + 1e-9, 0.01), 2)
-MIN_VAL_COVERAGE = 0.70
+DEFAULT_MIN_COVERAGE = 0.70   # rule A (shipped tau_conf = 0.82); rule B uses 0.85
 DISTRESS_CUT = 0.5
 
 
@@ -47,6 +50,15 @@ def stats(df, tau):
 
 
 def main():
+    ap = argparse.ArgumentParser(description="Coverage vs accuracy curve; picks tau_conf on val.")
+    ap.add_argument("--min-coverage", type=float, default=DEFAULT_MIN_COVERAGE,
+                    help=f"minimum val coverage for an eligible tau (default {DEFAULT_MIN_COVERAGE})")
+    args = ap.parse_args()
+    min_cov = args.min_coverage
+    suffix = "" if np.isclose(min_cov, DEFAULT_MIN_COVERAGE) else f"_cov{round(min_cov * 100):03d}"
+    out_csv = OUT_CSV.with_stem(OUT_CSV.stem + suffix)
+    out_fig = OUT_FIG.with_stem(OUT_FIG.stem + suffix)
+
     df = pd.read_csv(PROBS_CSV)
     probs = df[[f"p_{c}" for c in CLASSES]].to_numpy()
     df["confidence"] = probs.max(axis=1)
@@ -60,17 +72,17 @@ def main():
                 row[f"{split}_{k}"] = v
         rows.append(row)
     curve = pd.DataFrame(rows)
-    OUT_CSV.parent.mkdir(parents=True, exist_ok=True)
-    curve.round(4).to_csv(OUT_CSV, index=False)
+    out_csv.parent.mkdir(parents=True, exist_ok=True)
+    curve.round(4).to_csv(out_csv, index=False)
 
     # Selection rule (val only)
     grid = curve[curve["tau"] > 0]
-    eligible = grid[grid["val_coverage"] >= MIN_VAL_COVERAGE]
+    eligible = grid[grid["val_coverage"] >= min_cov]
     best = eligible.loc[eligible["val_accuracy"].idxmax()]   # idxmax -> first (smallest) tau on ties
     tau_conf = float(best["tau"])
     base = curve[curve["tau"] == 0].iloc[0]
 
-    print(f"Rule: max val accuracy s.t. val coverage >= {MIN_VAL_COVERAGE:.2f}  ->  tau_conf = {tau_conf:.2f}\n")
+    print(f"Rule: max val accuracy s.t. val coverage >= {min_cov:.2f}  ->  tau_conf = {tau_conf:.2f}\n")
     cols = ["coverage", "accuracy", "happy_coverage", "happy_to_distress"]
     print(f"{'':16s}" + "".join(f"{c:>19s}" for c in cols))
     for name, r in [("tau=0 (no abst)", base), (f"tau={tau_conf:.2f}", best)]:
@@ -84,7 +96,7 @@ def main():
         ax.plot(curve[f"{split}_coverage"], curve[f"{split}_accuracy"], marker=".", color=color, label=split)
         ax.scatter(best[f"{split}_coverage"], best[f"{split}_accuracy"], s=120, facecolors="none",
                    edgecolors=color, linewidths=2, zorder=3)
-    ax.axvline(MIN_VAL_COVERAGE, color="grey", ls=":", lw=1, label=f"min val coverage {MIN_VAL_COVERAGE:.2f}")
+    ax.axvline(min_cov, color="grey", ls=":", lw=1, label=f"min val coverage {min_cov:.2f}")
     ax.annotate(f"tau_conf = {tau_conf:.2f}", (best["val_coverage"], best["val_accuracy"]),
                 xytext=(-12, -18), textcoords="offset points", ha="right")
     ax.set_xlabel("coverage (share of clips kept)")
@@ -94,9 +106,9 @@ def main():
     ax.grid(alpha=0.3)
     ax.legend()
     fig.tight_layout()
-    OUT_FIG.parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(OUT_FIG, dpi=150)
-    print(f"\nSaved {OUT_CSV}\nSaved {OUT_FIG}")
+    out_fig.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(out_fig, dpi=150)
+    print(f"\nSaved {out_csv}\nSaved {out_fig}")
 
 
 if __name__ == "__main__":
