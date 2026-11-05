@@ -13,8 +13,16 @@ class MoodManager:
         self.score = 0.0
         self.turns_above = 0
         self.mode = "DEFAULT"
+        # Inspection state for explain(); written by update(), never read by its math
+        self.last_p = None
+        self.prev_mode = None
+        self.prev_turns_above = None
 
     def update(self, p_distress: float) -> str:
+        self.last_p = p_distress
+        self.prev_mode = self.mode
+        self.prev_turns_above = self.turns_above
+
         # 1) EMA update: m_t = gamma * m_{t-1} + (1 - gamma) * p_t
         self.score = self.gamma * self.score + (1 - self.gamma) * p_distress
 
@@ -27,6 +35,25 @@ class MoodManager:
             self.turns_above = 0
             self.mode = "DEFAULT"
         return self.mode
+
+    def explain(self) -> str:
+        """One-line reason for the mode chosen by the last update()."""
+        if self.last_p is None:
+            return "no update yet -> DEFAULT"
+        thr = f"threshold {self.threshold:.2f}"
+        if self.score >= self.threshold:
+            n, k = self.turns_above, self.persistence
+            turns = f"for {n}/{k} turns" if n <= k else f"for {n} turns (>= {k})"
+            reason = f"score {self.score:.2f} >= {thr} {turns} -> {self.mode}"
+            if n < k:
+                reason += f" (needs {k} consecutive turns)"
+        else:
+            reason = f"score {self.score:.2f} < {thr} -> {self.mode}"
+            if self.prev_turns_above:
+                reason += " (turns_above reset)"
+        if self.mode != self.prev_mode:
+            reason += f" [switched from {self.prev_mode}]"
+        return reason
 
 
 def reactive_mode(p_distress: float, threshold=0.5) -> str:

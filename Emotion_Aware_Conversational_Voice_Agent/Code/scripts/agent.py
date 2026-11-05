@@ -23,7 +23,7 @@ from feature_extraction import load_audio, SAMPLE_RATE
 from emotion_predictor import EmotionPredictor, CODE_DIR
 from asr import ASR
 from mood_manager import MoodManager, reactive_mode
-from response_generator import generate_reply
+from response_generator import generate_reply, build_system_prompt
 
 # Config
 GAMMA, THRESHOLD, PERSISTENCE = 0.7, 0.5, 2   # MoodManager v1 defaults (same as plot_mood_real.py)
@@ -82,9 +82,11 @@ class Agent:
         if self.use_mood:
             mode = self.mood.update(emo["p_distress"])
             mood_score, turns_above = self.mood.score, self.mood.turns_above
+            reason = self.mood.explain()
         else:
             mode = reactive_mode(emo["p_distress"], THRESHOLD)   # per-turn baseline for ablation
             mood_score, turns_above = None, None
+            reason = "reactive baseline: p_distress vs 0.5"
         timings["mood"] = time.perf_counter() - t0
         switched = self.prev_mode is not None and mode != self.prev_mode
         self.prev_mode = mode
@@ -93,6 +95,9 @@ class Agent:
         # (~72% accurate on held-out speakers); passing it to the LLM would let one
         # misclassified clip change the agent's tone and undo MoodManager's smoothing.
         perceived_emotion = DISTRESS_CONTEXT if mode == "EMPATHETIC" else None
+
+        # Same arguments generate_reply passes to build_system_prompt, so this is the exact LLM prompt
+        system_prompt = build_system_prompt(mode, perceived_emotion, None) if self.use_llm else None
 
         t0 = time.perf_counter()
         reply = generate_reply(mode, transcript, perceived_emotion=perceived_emotion,
@@ -121,6 +126,16 @@ class Agent:
             "timings": {k: round(v, 3) for k, v in timings.items()},
             "use_llm": self.use_llm,
             "use_mood": self.use_mood,
+            # A2.1 inspectable state
+            "confidence": max(emo["probs"].values()),
+            "mood_params": {"gamma": GAMMA, "threshold": THRESHOLD, "persistence": PERSISTENCE},
+            "reason": reason,
+            "system_prompt": system_prompt,
+            # Placeholders for later A2 steps; always present so the log schema is stable
+            "abstained": None,
+            "check_in": None,
+            "strategy": None,
+            "tts_tags": None,
         }
         with open(self.log_path, "a", encoding="utf-8") as f:
             f.write(json.dumps(result) + "\n")
@@ -135,8 +150,9 @@ class Agent:
         t = r["timings"]
         print(f"\n--- Turn {r['turn']}: {r['file']} ---")
         print(f"  transcript : {r['transcript']}")
-        print(f"  emotion    : {probs}  -> label={r['label']}  p_distress={r['p_distress']:.3f}")
+        print(f"  emotion    : {probs}  -> label={r['label']}  confidence={r['confidence']:.2f}  p_distress={r['p_distress']:.3f}")
         print(f"  mood       : {mood}  mode={r['mode']}{'  << SWITCHED' if r['switched'] else ''}")
+        print(f"  reason     : {r['reason']}")
         print(f"  reply      : {r['reply']}")
         src = f"{r['source']} ({r['model']})" if r["model"] else r["source"]
         print(f"  source     : {src}" + (f"  error={r['error']}" if r["error"] else ""))

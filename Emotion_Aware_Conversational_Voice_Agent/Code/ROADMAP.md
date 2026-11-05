@@ -20,6 +20,8 @@
 
 ## Build Sequence (what's next, in order)
 
+> P1–P9 = the nine design principles in the workflow doc, Section 0.6 (added 2026-11-05).
+
 ### A. Thin end-to-end agent — DONE (2026-10-31)
 Wire the minimum viable pipeline printed to the terminal:
 1. Whisper ASR (tiny.en) → text
@@ -38,10 +40,22 @@ Wire the minimum viable pipeline printed to the terminal:
 - **Confound**: the Gemini fallback chain (3.6-flash → 3.5-flash-lite → 3.1-flash-lite) can change model mid-conversation, so tone differences may partly come from the model. Every attempt is logged per turn; pin one model for the Task F evaluation
 - RAVDESS transcripts are lexically neutral ("Kids are talking by the door"), so reply content is uninformative; tone is the only signal in scripted runs
 
+### A2. Guardrails in the current agent (next — before B)
+Design principles from the workflow doc, Section 0.6. All CPU, all on existing code.
+1. **Inspectable state** (P1) — DONE (2026-11-05): add `MoodManager.explain()`; every turn in the session JSONL logs probs, confidence, abstain flag, mood score, turns_above, mode, strategy, reason, exact system prompt, LLM model, TTS tags
+   - Shipped: `explain()` one-line reason; JSONL adds `confidence`, `mood_params`, `reason`, `system_prompt` (null with `--no-llm`) and always-present placeholders `abstained` / `check_in` / `strategy` / `tts_tags`. Re-run matches Task A (MoodManager 1 switch on turn 7, reactive 4)
+2. **Abstain** (P2): confidence = top-1 prob; if < τ_conf (start 0.5, tune on val) → mood holds state, no mode switch, logged `abstained`; after 2+ abstains in a non-neutral mood → `check_in` flag. Report coverage vs accuracy (targets the ~53% happy→distress bias)
+3. **Code decides, LLM speaks** (P3): MoodManager outputs a strategy (VALIDATE / CALM / ENCOURAGE / NEUTRAL); `build_system_prompt(strategy, facts)` — drop `perceived_emotion` from the prompt. MoodManager v1 (single distress axis) can only give VALIDATE / NEUTRAL; MoodManager v2 (one EMA per class: sad→VALIDATE, angry→CALM, happy→ENCOURAGE) unlocks the other two
+4. **Crisis check** (P9): `safety.check_crisis(transcript)` right after ASR; on match skip the LLM, return a fixed safe response (988 in the US), no memory stored from that turn
+5. **Shuffle-order placebo** (P7): rerun `plot_mood_real.py` (1000 conversations) with turn order shuffled; compare MoodManager vs reactive, original vs shuffled; report either way
+
 ### B. MemoryManager — JSON scaffold
 - Conversation buffer (last N turns)
 - User-fact store (name, preferences) with emotion-gated write
 - JSON file backend — no vector DB yet
+- Every fact gets a `memory_id`, `source: "user_turn"` and `turn_id`; methods `list_user_facts()` and `delete(memory_id)` from day one (P4)
+- **Perspective boundary** (P5): `extract_fact()` sees only the user's transcript, never Gemini's reply; unit test: a fact invented in a reply is never stored
+- ABSTAIN turns don't raise `importance_score` (P2)
 
 ### C. Bi-LSTM + CNN classifiers
 - CNN on mel-spectrograms (3-class)
@@ -53,19 +67,31 @@ Wire the minimum viable pipeline printed to the terminal:
 - Replace JSON fact store with Chroma/FAISS
 - MiniLM embeddings + emotion-weighted retrieval
 - Integrate into agent loop
+- `delete(memory_id)` wired to Chroma; unit test: a deleted fact is never retrieved again (P4)
+- Log similarity / importance / final score for every retrieved memory (P1)
 
 ### E. TTS — CSM-1B on Colab
 - Google Colab notebook running Sesame CSM-1B
 - REST endpoint the agent calls for audio output
 - Tone-conditioned voice (map mood mode → speaker style)
+- **No direct emotion → voice path** (P6): TTS tags come only from the MoodManager strategy, never the per-turn SER output; `voice/` does not import the emotion predictor
 
 ### F. Evaluation & demo
 - End-to-end evaluation: emotion accuracy, response quality, mood stability
 - Prepare demo script and recording
+- Pin one LLM model for every evaluation run (Task A fallback-chain confound)
+- **Mishandle suite** (P8): 5–10 scripted scenarios in `tests/` (missed distress, mood lost after topic change, agreeing with something harmful, false empathy on a happy user, recalling a deleted fact, crisis phrase); pass criteria written first; plain Gemini vs full system, report the first failing turn
+- Include the shuffle-order placebo (A2.5) and the abstain coverage curve (A2.2) in the results
 
 ### G. Repo restructure
 - Clean folder layout per `Modular Project Structure.pdf`
 - Final README, docstrings, reproducibility check
+
+### H. Web frontend (final demo)
+- **Consent screen** before the mic turns on: what is recorded, stored, how to delete (P9)
+- **"What I remember about you"** page: list facts with a delete button each → `delete(memory_id)` (P4)
+- **"Delete all my data"** button → `reset_user_memory(user_id)` + session logs (P9)
+- **"Why did it answer this way?"** debug panel showing the per-turn state from A2.1 (P1)
 
 ---
 
