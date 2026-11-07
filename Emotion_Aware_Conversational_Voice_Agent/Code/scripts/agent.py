@@ -6,6 +6,7 @@ Logs every turn as one JSON line to results/logs/session_<timestamp>.jsonl.
 
 Usage (from anywhere):
   python scripts/agent.py clip1.wav clip2.wav ...
+  python scripts/agent.py data/my_voice_v2           # a folder = its .wav files, sorted by name
   python scripts/agent.py --script            # 12-turn label script from one test speaker (seed 42)
   flags: --no-llm (template replies only), --no-mood (per-turn reactive baseline),
          --tau T (abstain below top-1 confidence T; default TAU_CONF from abstain_curve.py, 0 disables)
@@ -221,7 +222,7 @@ def summary(results, true_labels=None):
 
 def main():
     ap = argparse.ArgumentParser(description="Thin end-to-end emotion-aware agent (Task A).")
-    ap.add_argument("clips", nargs="*", help="wav files to run in order")
+    ap.add_argument("clips", nargs="*", help="wav files to run in order, or folders (their .wav files, sorted)")
     ap.add_argument("--script", action="store_true", help="12-turn label script from one test speaker")
     ap.add_argument("--no-llm", action="store_true", help="template replies only")
     ap.add_argument("--tau", type=float, default=TAU_CONF,
@@ -234,7 +235,11 @@ def main():
         speaker, clips, true_labels = scripted_clips()
         print(f"Scripted conversation: test speaker {speaker}, labels {' '.join(LABEL_SCRIPT)}")
     elif args.clips:
-        clips = [Path(c) for c in args.clips]
+        clips = []
+        for c in map(Path, args.clips):   # PowerShell doesn't expand *.wav, so accept folders too
+            clips += sorted(c.glob("*.wav")) if c.is_dir() else [c]
+        if not clips:
+            ap.error("no .wav files found")
     else:
         ap.error("give wav files or --script")
 

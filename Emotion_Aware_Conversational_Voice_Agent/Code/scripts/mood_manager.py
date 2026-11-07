@@ -4,8 +4,9 @@ Minimal MoodManager: normalized EMA mood score + threshold + N-turn persistence.
 Goes in src/mood/mood_manager.py
 """
 
-# A2.2: chosen by scripts/abstain_curve.py (max val accuracy with val coverage >= 0.70)
-TAU_CONF = 0.82
+# A2.2: chosen by scripts/abstain_curve.py --min-coverage 0.85 (Rule B: max val accuracy with
+# val coverage >= 0.85). Rule A (coverage >= 0.70) gave 0.82; see ROADMAP A2.2 for both results.
+TAU_CONF = 0.72
 CHECK_IN_AFTER = 2   # consecutive abstains in a non-DEFAULT mood before raising check_in
 
 

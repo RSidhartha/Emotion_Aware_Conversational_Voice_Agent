@@ -45,7 +45,7 @@ Design principles from the workflow doc, Section 0.6. All CPU, all on existing c
 1. **Inspectable state** (P1) — DONE (2026-11-05): add `MoodManager.explain()`; every turn in the session JSONL logs probs, confidence, abstain flag, mood score, turns_above, mode, strategy, reason, exact system prompt, LLM model, TTS tags
    - Shipped: `explain()` one-line reason; JSONL adds `confidence`, `mood_params`, `reason`, `system_prompt` (null with `--no-llm`) and always-present placeholders `abstained` / `check_in` / `strategy` / `tts_tags`. Re-run matches Task A (MoodManager 1 switch on turn 7, reactive 4)
 2. **Abstain** (P2): confidence = top-1 prob; if < τ_conf (start 0.5, tune on val) → mood holds state, no mode switch, logged `abstained`; after 2+ abstains in a non-neutral mood → `check_in` flag. Report coverage vs accuracy (targets the ~53% happy→distress bias)
-   - **Shipped / finding** (2026-11-05): `scripts/abstain_curve.py`; pre-set rule = highest val accuracy among taus with val coverage ≥ 0.70 → **τ_conf = 0.82** (agent default; `--tau 0` disables). Abstain holds score / turns_above / mode; `check_in` after 2+ consecutive abstains in a non-DEFAULT mood (logged only until A2.3). Outputs: `results/metrics/abstain_curve.csv`, `results/figures/abstain_coverage.png`
+   - **Shipped / finding** (2026-11-05): `scripts/abstain_curve.py`; pre-set rule = highest val accuracy among taus with val coverage ≥ 0.70 → **τ_conf = 0.82** (shipped as the first default; replaced by Rule B's 0.72 below; `--tau 0` disables). Abstain holds score / turns_above / mode; `check_in` after 2+ consecutive abstains in a non-DEFAULT mood (logged only until A2.3). Outputs: `results/metrics/abstain_curve.csv`, `results/figures/abstain_coverage.png`
 
      | τ | split | coverage | accuracy | happy→distress (kept happy) |
      |---|---|---|---|---|
@@ -59,6 +59,13 @@ Design principles from the workflow doc, Section 0.6. All CPU, all on existing c
    - My-voice run (`data/my_voice` 01–10): abstained on 6/10 turns, 5 of which were correct predictions; mode never reached EMPATHETIC through the sad/angry stretch (without abstain it switches on turn 7). Confidence on out-of-domain audio runs low, so 0.82 is too strict there
    - Abstain can't catch confident mistakes: `03_angry` was read as happy at confidence 0.91 and passed through
    - **Rule B** (recorded 2026-11-05, before computing it): tau = highest val accuracy among taus with val coverage >= 0.85. Tested only on a fresh my-voice set (`data/my_voice_v2`), never on `data/my_voice` 01–10
+     → **τ = 0.72**: val coverage 0.854 / accuracy 0.768 / happy→distress 0.346; test coverage 0.771 / accuracy 0.784 / happy→distress 0.500 (`abstain_curve.py --min-coverage 0.85`)
+   - **my_voice_v2 result** (15 fresh clips, labels fixed before recording; `agent.py --no-llm data/my_voice_v2` at τ 0 / 0.72 / 0.82):
+     - Plain accuracy 5/15 (happy 0/5, sad 0/5, angry 5/5); 11/15 predicted angry
+     - First EMPATHETIC switch: τ 0 turn 4, τ 0.72 turn 7, τ 0.82 turn 11; all end EMPATHETIC (no recovery)
+     - τ 0.72: 8 abstains, 6 of them wrong predictions; `check_in` fired on turns 9–10
+     - **Decision**: τ_conf = 0.72 is the agent default (`--tau` still overrides). Abstain delays false switches but can't stop high-confidence errors (sad→angry 0.99, happy→angry 0.95)
+     - **Open question**: `my_voice` (Nov 1) was 8/10 correct, `my_voice_v2` is 5/15 → audio check next
 3. **Code decides, LLM speaks** (P3): MoodManager outputs a strategy (VALIDATE / CALM / ENCOURAGE / NEUTRAL); `build_system_prompt(strategy, facts)` — drop `perceived_emotion` from the prompt. MoodManager v1 (single distress axis) can only give VALIDATE / NEUTRAL; MoodManager v2 (one EMA per class: sad→VALIDATE, angry→CALM, happy→ENCOURAGE) unlocks the other two
 4. **Crisis check** (P9): `safety.check_crisis(transcript)` right after ASR; on match skip the LLM, return a fixed safe response (988 in the US), no memory stored from that turn
 5. **Shuffle-order placebo** (P7): rerun `plot_mood_real.py` (1000 conversations) with turn order shuffled; compare MoodManager vs reactive, original vs shuffled; report either way
