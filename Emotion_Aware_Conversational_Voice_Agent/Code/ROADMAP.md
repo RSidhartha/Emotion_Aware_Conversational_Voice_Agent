@@ -68,9 +68,22 @@ Design principles from the workflow doc, Section 0.6. All CPU, all on existing c
      - **Open question**: `my_voice` (Nov 1) was 8/10 correct, `my_voice_v2` is 5/15 → audio check next
      - Audio check (`check_audio.py`): v2 ~13 dB louder than RAVDESS and louder/shorter than v1; on the top features all three emotions sit past RAVDESS angry → model learned 'loud = angry'; workflow Section 2 RMS normalization was never implemented
      - Pitch features drift up to 19 Hz vs the manifest (old Python 3.14 env); not in top 10
+     - Loudness test (`test_loudness.py`): scaling each clip to RAVDESS speech RMS (−34.7 dBFS) drops v2 angry predictions 13 → 2 but accuracy stays 5/15 (errors move to happy); v1 drops 8/10 → 6/10. Conclusion: missing RMS normalization causes the angry bias, but XGBoost on the 39 features doesn't recognize emotion in my voice. Per-clip scaling also erases real loudness differences; fix belongs in Task C, not a separate XGBoost retrain
 3. **Code decides, LLM speaks** (P3): MoodManager outputs a strategy (VALIDATE / CALM / ENCOURAGE / NEUTRAL); `build_system_prompt(strategy, facts)` — drop `perceived_emotion` from the prompt. MoodManager v1 (single distress axis) can only give VALIDATE / NEUTRAL; MoodManager v2 (one EMA per class: sad→VALIDATE, angry→CALM, happy→ENCOURAGE) unlocks the other two
 4. **Crisis check** (P9): `safety.check_crisis(transcript)` right after ASR; on match skip the LLM, return a fixed safe response (988 in the US), no memory stored from that turn
 5. **Shuffle-order placebo** (P7): rerun `plot_mood_real.py` (1000 conversations) with turn order shuffled; compare MoodManager vs reactive, original vs shuffled; report either way
+
+### C. Bi-LSTM + CNN classifiers (moved before B, 2026-11-07: A2.2 audio/loudness checks showed XGBoost doesn't transfer to my voice)
+- CNN on mel-spectrograms (3-class)
+- Bi-LSTM on feature sequences (3-class)
+- Extra model: frozen pretrained speech encoder (WavLM-base or wav2vec2-base) embeddings + small classifier, alongside CNN and Bi-LSTM
+- Same preprocessing in training and in the agent (one shared function)
+- Random gain augmentation in training (±12 dB) + noise/pitch/speed augmentation
+- CREMA-D for more speakers if time allows
+- Compare against XGBoost 0.719 baseline in same environment
+- Update model_comparison.csv with all models
+- Out-of-domain test on a fresh my-voice set (`data/my_voice_v3`), never used for tuning
+- Rerun Rule B for τ_conf with whichever model wins
 
 ### B. MemoryManager — JSON scaffold
 - Conversation buffer (last N turns)
@@ -79,12 +92,6 @@ Design principles from the workflow doc, Section 0.6. All CPU, all on existing c
 - Every fact gets a `memory_id`, `source: "user_turn"` and `turn_id`; methods `list_user_facts()` and `delete(memory_id)` from day one (P4)
 - **Perspective boundary** (P5): `extract_fact()` sees only the user's transcript, never Gemini's reply; unit test: a fact invented in a reply is never stored
 - ABSTAIN turns don't raise `importance_score` (P2)
-
-### C. Bi-LSTM + CNN classifiers
-- CNN on mel-spectrograms (3-class)
-- Bi-LSTM on feature sequences (3-class)
-- Compare against XGBoost 0.719 baseline in same environment
-- Update model_comparison.csv with all three
 
 ### D. RAG upgrade (MemoryManager v2)
 - Replace JSON fact store with Chroma/FAISS
