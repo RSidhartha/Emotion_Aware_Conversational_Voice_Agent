@@ -61,11 +61,13 @@ Design principles from the workflow doc, Section 0.6. All CPU, all on existing c
    - **Rule B** (recorded 2026-11-05, before computing it): tau = highest val accuracy among taus with val coverage >= 0.85. Tested only on a fresh my-voice set (`data/my_voice_v2`), never on `data/my_voice` 01–10
      → **τ = 0.72**: val coverage 0.854 / accuracy 0.768 / happy→distress 0.346; test coverage 0.771 / accuracy 0.784 / happy→distress 0.500 (`abstain_curve.py --min-coverage 0.85`)
    - **my_voice_v2 result** (15 fresh clips, labels fixed before recording; `agent.py --no-llm data/my_voice_v2` at τ 0 / 0.72 / 0.82):
-     - Plain accuracy 5/15 (happy 0/5, sad 0/5, angry 5/5); 11/15 predicted angry
+     - Plain accuracy 5/15 (happy 0/5, sad 0/5, angry 5/5); 13/15 predicted angry (06_sad and 08_sad read as happy)
      - First EMPATHETIC switch: τ 0 turn 4, τ 0.72 turn 7, τ 0.82 turn 11; all end EMPATHETIC (no recovery)
      - τ 0.72: 8 abstains, 6 of them wrong predictions; `check_in` fired on turns 9–10
      - **Decision**: τ_conf = 0.72 is the agent default (`--tau` still overrides). Abstain delays false switches but can't stop high-confidence errors (sad→angry 0.99, happy→angry 0.95)
      - **Open question**: `my_voice` (Nov 1) was 8/10 correct, `my_voice_v2` is 5/15 → audio check next
+     - Audio check (`check_audio.py`): v2 ~13 dB louder than RAVDESS and louder/shorter than v1; on the top features all three emotions sit past RAVDESS angry → model learned 'loud = angry'; workflow Section 2 RMS normalization was never implemented
+     - Pitch features drift up to 19 Hz vs the manifest (old Python 3.14 env); not in top 10
 3. **Code decides, LLM speaks** (P3): MoodManager outputs a strategy (VALIDATE / CALM / ENCOURAGE / NEUTRAL); `build_system_prompt(strategy, facts)` — drop `perceived_emotion` from the prompt. MoodManager v1 (single distress axis) can only give VALIDATE / NEUTRAL; MoodManager v2 (one EMA per class: sad→VALIDATE, angry→CALM, happy→ENCOURAGE) unlocks the other two
 4. **Crisis check** (P9): `safety.check_crisis(transcript)` right after ASR; on match skip the LLM, return a fixed safe response (988 in the US), no memory stored from that turn
 5. **Shuffle-order placebo** (P7): rerun `plot_mood_real.py` (1000 conversations) with turn order shuffled; compare MoodManager vs reactive, original vs shuffled; report either way
